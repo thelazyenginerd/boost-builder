@@ -1,0 +1,41 @@
+sudo: required
+language: default
+services:
+- docker
+env:
+  global:
+  - BOOST_VERSION=1.68.0
+  - BOOST_WORKDIR=boost_1_68_0
+  - BOOST_TARBALL=${BOOST_WORKDIR}.tar.bz2
+  - BOOST_REMOTE_URL=https://dl.bintray.com/boostorg/release/${BOOST_VERSION}/source/${BOOST_TARBALL}
+  matrix:
+  - IMAGE=ubuntu:bionic
+  - IMAGE=ubuntu:xenial
+  - IMAGE=ubuntu:trusty
+  - IMAGE=debian:stretch
+  - IMAGE=debian:jessie
+addons:
+  apt:
+    update: true
+    packages:
+    - wget
+before_script:
+- wget --quiet ${BOOST_REMOTE_URL} --output-document ${BOOST_TARBALL}
+- tar jxf ${BOOST_TARBALL}
+- docker build
+    --target builder
+    --tag builder
+    --build-arg image=${IMAGE}
+    --build-arg workdir=${BOOST_WORKDIR}
+    --rm
+    .
+- docker run --rm -it builder g++ --version
+script:
+- docker build
+    --tag boost
+    --build-arg image=${IMAGE}
+    --build-arg workdir=${BOOST_WORKDIR}
+    --rm
+    .
+after_success:
+- docker images
