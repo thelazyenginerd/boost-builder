@@ -4,8 +4,8 @@ services:
 - docker
 env:
   global:
-  - BOOST_VERSION=1.68.0
-  - BOOST_WORKDIR=boost_1_68_0
+  - BOOST_VERSION=1.69.0
+  - BOOST_WORKDIR=boost_1_69_0
   - BOOST_TARBALL=${BOOST_WORKDIR}.tar.bz2
   - BOOST_REMOTE_URL=https://dl.bintray.com/boostorg/release/${BOOST_VERSION}/source/${BOOST_TARBALL}
   matrix:
