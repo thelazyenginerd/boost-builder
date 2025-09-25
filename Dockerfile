@@ -12,7 +12,7 @@ RUN \
     libicu-dev \
     liblzma-dev \
     libssl-dev \
-    python-dev \
+    python3-dev \
     zlib1g-dev
 
 FROM builder
