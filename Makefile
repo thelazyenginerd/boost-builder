@@ -1,6 +1,6 @@
 ## Boost
-boost_version = 1.89.0
-boost_workdir = boost_1_89_0
+boost_version ?= 1.89.0
+boost_workdir = boost_$(subst .,_,$(boost_version))
 boost_tarball = ${boost_workdir}.tar.bz2
 boost_remote_url = https://archives.boost.io/release/${boost_version}/source/${boost_tarball}
 

@@ -9,12 +9,16 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - image: "ubuntu:noble"
-          - image: "ubuntu:plucky"
+          image:
+            - "ubuntu:noble"
+            - "ubuntu:plucky"
+          boost_version:
+            - "1.88.0"
+            - "1.89.0"
     steps:
       - name: checkout
         uses: actions/checkout@v4
 
       - name: build
         run: |
-          make all image=${{ matrix.image }}
+          make all image=${{ matrix.image }} boost_version=${{ matrix.boost_version }}
