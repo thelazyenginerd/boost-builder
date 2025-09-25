@@ -8,13 +8,12 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        include:
-          image:
-            - "ubuntu:noble"
-            - "ubuntu:plucky"
-          boost_version:
-            - "1.88.0"
-            - "1.89.0"
+        image:
+          - ubuntu:noble
+          - ubuntu:plucky
+        boost_version:
+          - 1.88.0
+          - 1.89.0
     steps:
       - name: checkout
         uses: actions/checkout@v4
