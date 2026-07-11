@@ -66,7 +66,7 @@ jobs:
           ARG BOOST_DEBUG_SYMBOLS
 
           WORKDIR /build
-          RUN wget https://boostorg.jfrog.io/artifactory/main/release/${BOOST_VERSION}/source/${BOOST_DIR}.tar.gz \
+          RUN wget https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_DIR}.tar.gz \
               && tar -xzf ${BOOST_DIR}.tar.gz \
               && rm ${BOOST_DIR}.tar.gz
 
