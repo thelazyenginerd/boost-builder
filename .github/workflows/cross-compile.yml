@@ -5,7 +5,7 @@ on:
     branches: [ "main", "dev" ]
   workflow_dispatch:
 
-# Change the version here in one place
+# Centralized version management
 env:
   BOOST_VERSION: "1.91.0"
 
@@ -17,12 +17,14 @@ jobs:
         platform: [linux/amd64, linux/arm/v6, linux/arm/v8]
         variant_type: [release, debug]
         include:
+          # Architecture label translations
           - platform: linux/amd64
             arch_name: amd64
           - platform: linux/arm/v6
             arch_name: armv6
           - platform: linux/arm/v8
             arch_name: armv8
+          # Matrix compilation strategies
           - variant_type: release
             cxxflags: "-O3"
             boost_variant: "release"
@@ -44,14 +46,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Converts "1.91.0" format to "boost_1_91_0" for the download directory structure
+      # Converts "1.91.0" format to "boost_1_91_0" required for the source tree
       - name: Format Directory Name
         id: format
         run: |
           DIR_NAME="boost_$(echo ${{ env.BOOST_VERSION }} | tr '.' '_')"
           echo "dir_name=$DIR_NAME" >> $GITHUB_OUTPUT
 
-       Berk
       - name: Create Build Dockerfile
         run: |
           cat << 'EOF' > Dockerfile.boost
@@ -62,6 +63,7 @@ jobs:
           ARG BOOST_DIR
           ARG BOOST_CXXFLAGS
           ARG BOOST_VARIANT
+          ARG BOOST_DEBUG_SYMBOLS
 
           WORKDIR /build
           RUN wget https://boostorg.jfrog.io/artifactory/main/release/${BOOST_VERSION}/source/${BOOST_DIR}.tar.gz \
@@ -91,12 +93,12 @@ jobs:
             BOOST_DIR=${{ steps.format.outputs.dir_name }}
             BOOST_CXXFLAGS=${{ matrix.cxxflags }}
             BOOST_VARIANT=${{ matrix.boost_variant }}
+            BOOST_DEBUG_SYMBOLS=${{ matrix.debug_symbols }}
           outputs: type=tar,dest=./boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}.tar
 
       - name: Upload Boost Artifacts to GitHub
         uses: actions/upload-artifact@v4
         with:
-          # The version is automatically appended to the file download name
           name: boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}
           path: ./boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}.tar
           retention-days: 5
