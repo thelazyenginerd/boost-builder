@@ -1,0 +1,102 @@
+name: Build Multi-Arch Boost Libraries
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  workflow_dispatch:
+
+# Change the version here in one place
+env:
+  BOOST_VERSION: "1.91.0"
+
+jobs:
+  build-boost:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [linux/amd64, linux/arm/v6, linux/arm/v8]
+        variant_type: [release, debug]
+        include:
+          - platform: linux/amd64
+            arch_name: amd64
+          - platform: linux/arm/v6
+            arch_name: armv6
+          - platform: linux/arm/v8
+            arch_name: armv8
+          - variant_type: release
+            cxxflags: "-O3"
+            boost_variant: "release"
+            debug_symbols: "on"
+          - variant_type: debug
+            cxxflags: "-O0"
+            boost_variant: "debug"
+            debug_symbols: "on"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm,arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Converts "1.91.0" format to "boost_1_91_0" for the download directory structure
+      - name: Format Directory Name
+        id: format
+        run: |
+          DIR_NAME="boost_$(echo ${{ env.BOOST_VERSION }} | tr '.' '_')"
+          echo "dir_name=$DIR_NAME" >> $GITHUB_OUTPUT
+
+       Berk
+      - name: Create Build Dockerfile
+        run: |
+          cat << 'EOF' > Dockerfile.boost
+          FROM alpine:latest
+          RUN apk add --no-cache wget tar build-base linux-headers python3-dev
+
+          ARG BOOST_VERSION
+          ARG BOOST_DIR
+          ARG BOOST_CXXFLAGS
+          ARG BOOST_VARIANT
+
+          WORKDIR /build
+          RUN wget https://boostorg.jfrog.io/artifactory/main/release/${BOOST_VERSION}/source/${BOOST_DIR}.tar.gz \
+              && tar -xzf ${BOOST_DIR}.tar.gz \
+              && rm ${BOOST_DIR}.tar.gz
+
+          WORKDIR /build/${BOOST_DIR}
+          RUN ./bootstrap.sh --prefix=/opt/boost \
+              && ./b2 install --prefix=/opt/boost \
+                 threading=multi \
+                 link=shared,static \
+                 variant=${BOOST_VARIANT} \
+                 cxxflags=${BOOST_CXXFLAGS} \
+                 debug-symbols=${BOOST_DEBUG_SYMBOLS}
+
+          RUN tar -czf /boost-artifacts.tar.gz -C /opt boost
+          EOF
+
+      - name: Build Boost via Docker Buildx
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.boost
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BOOST_VERSION=${{ env.BOOST_VERSION }}
+            BOOST_DIR=${{ steps.format.outputs.dir_name }}
+            BOOST_CXXFLAGS=${{ matrix.cxxflags }}
+            BOOST_VARIANT=${{ matrix.boost_variant }}
+          outputs: type=tar,dest=./boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}.tar
+
+      - name: Upload Boost Artifacts to GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          # The version is automatically appended to the file download name
+          name: boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}
+          path: ./boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}.tar
+          retention-days: 5
