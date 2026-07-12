@@ -68,7 +68,7 @@ jobs:
         run: |
           cat << 'EOF' > Dockerfile.boost
           # Stage 1: Build inside a Debian environment to generate glibc-compatible binaries
-          FROM debian:bookworm-slim AS builder
+          FROM ubuntu:noble AS builder
 
           # Install dependencies using apt-get instead of apk
           RUN apt-get update && apt-get install -y --no-install-recommends \
