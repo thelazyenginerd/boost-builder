@@ -13,6 +13,7 @@ permissions:
   contents: read
 
 jobs:
+  # --- NATIVE AMD64 SMOKE TEST JOB ---
   smoke-test-amd64:
     runs-on: ubuntu-latest
     steps:
@@ -31,7 +32,8 @@ jobs:
       - name: Create Build Dockerfile
         run: |
           cat << 'EOF' > Dockerfile.boost
-          ARG BASE_IMAGE
+          # Clear warning by setting a sensible default
+          ARG BASE_IMAGE=ubuntu:noble
           FROM ${BASE_IMAGE} AS builder
 
           ENV DEBIAN_FRONTEND=noninteractive
@@ -73,7 +75,8 @@ jobs:
                   cxxflags=${BOOST_CXXFLAGS} \
                   debug-symbols=${BOOST_DEBUG_SYMBOLS}
 
-          RUN checkinstall -y \
+          # Bypass checkinstall filesystem translation engine to allow smooth directory copies
+          RUN checkinstall -y --fstrans=no \
               --pkgname="custom-boost-${VARIANT_TYPE}" \
               --pkgversion="${BOOST_VERSION}" \
               --pkgarch="${ARCH_NAME}" \
@@ -81,7 +84,7 @@ jobs:
               --provides="custom-boost" \
               --requires="libc6" \
               --maintainer="ci-builder@local" \
-              cp -a /tmp/boost_staging/. /usr/local/
+              cp -r /tmp/boost_staging/lib /tmp/boost_staging/include /usr/local/
 
           FROM scratch
           ARG BOOST_DIR
@@ -114,7 +117,7 @@ jobs:
 
   # --- MULTI-ARCH SLOW MATRIX JOB ---
   build-boost:
-    needs: smoke-test-amd64 # <--- This forces the QEMU builds to wait for the smoke test
+    needs: smoke-test-amd64 # Waits for the smoke test to guarantee fast failing
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -156,7 +159,8 @@ jobs:
       - name: Create Build Dockerfile
         run: |
           cat << 'EOF' > Dockerfile.boost
-          ARG BASE_IMAGE
+          # Clear warning by setting a sensible default
+          ARG BASE_IMAGE=ubuntu:noble
           FROM ${BASE_IMAGE} AS builder
 
           ENV DEBIAN_FRONTEND=noninteractive
@@ -198,7 +202,8 @@ jobs:
                   cxxflags=${BOOST_CXXFLAGS} \
                   debug-symbols=${BOOST_DEBUG_SYMBOLS}
 
-          RUN checkinstall -y \
+          # Bypass checkinstall filesystem translation engine to allow smooth directory copies
+          RUN checkinstall -y --fstrans=no \
               --pkgname="custom-boost-${VARIANT_TYPE}" \
               --pkgversion="${BOOST_VERSION}" \
               --pkgarch="${ARCH_NAME}" \
@@ -206,7 +211,7 @@ jobs:
               --provides="custom-boost" \
               --requires="libc6" \
               --maintainer="ci-builder@local" \
-              cp -a /tmp/boost_staging/. /usr/local/
+              cp -r /tmp/boost_staging/lib /tmp/boost_staging/include /usr/local/
 
           FROM scratch
           ARG BOOST_DIR
