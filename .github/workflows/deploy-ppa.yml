@@ -9,8 +9,10 @@ on:
       - main
 
 permissions:
-  contents: write
-  pages: write
+  actions: read       # Required to download artifacts from the upstream build run
+  contents: write     # Required to push the updated repository files to gh-pages
+  pages: write        # Required to deploy the updated static site
+  id-token: write     # Required for secure OIDC token handshakes
 
 jobs:
   publish-ppa:
