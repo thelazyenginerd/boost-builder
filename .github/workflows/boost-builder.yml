@@ -1,4 +1,4 @@
-name: Build Boost Debian Packages
+name: Build SBC Boost Debian Packages
 
 on:
   push:
@@ -98,9 +98,13 @@ jobs:
           # Run standard bootstrap
           RUN ./bootstrap.sh --prefix=/usr/local
 
-          # Use checkinstall to intercept the build installation and output a .deb file
-          # Fixed version formatting to use '+' instead of '-' to satisfy dpkg validation
-          # Wrapped b2 flags in quotes to prevent token split failures inside checkinstall execution environment
+          # Dynamically generate a clean local shell wrapper script to isolate b2 execution arguments
+          # This protects arguments from parsing issues across Docker and checkinstall steps
+          RUN echo '#!/bin/sh' > run_install.sh && \
+              echo "./b2 install threading=multi link=shared,static variant=${BOOST_VARIANT} cxxflags=\"${BOOST_CXXFLAGS}\" debug-symbols=${BOOST_DEBUG_SYMBOLS}" >> run_install.sh && \
+              chmod +x run_install.sh
+
+          # Use checkinstall to run our clean wrapper script
           RUN checkinstall -y \
               --pkgname="custom-boost" \
               --pkgversion="${BOOST_VERSION}+${VARIANT_TYPE}" \
@@ -109,7 +113,7 @@ jobs:
               --provides="custom-boost" \
               --requires="libc6" \
               --maintainer="ci-builder@local" \
-              "./b2 install threading=multi link=shared,static variant=${BOOST_VARIANT} cxxflags=\"${BOOST_CXXFLAGS}\" debug-symbols=${BOOST_DEBUG_SYMBOLS}"
+              ./run_install.sh
 
           # Stage 2: Discard everything else, extract ONLY the built .deb package file
           FROM scratch
