@@ -1,40 +1,34 @@
-name: Build Multi-Arch Boost Libraries
-
-permissions:
-  contents: read
-  actions: write
+name: Build SBC Boost Debian Packages
 
 on:
   push:
-    branches:
-      - "main"
-      - "dev"
+    branches: [ "main", "dev" ]
   workflow_dispatch:
 
 # Centralized version management
 env:
   BOOST_VERSION: "1.91.0"
 
+permissions:
+  contents: read
+
 jobs:
   build-boost:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        platform:
-          - linux/amd64
-          - linux/arm/v6
-          - linux/arm/v8
-        variant_type:
-          - release
-          - debug
+        # arm64 targets Pi 4 & Rock64. arm/v6 (armel) targets Pi Zero W.
+        platform: [linux/arm64, linux/arm/v6]
+        variant_type: [release, debug]
         include:
-          # Architecture label translations
-          - platform: linux/amd64
-            arch_name: amd64
-          #- platform: linux/arm/v6
-          #  arch_name: armv6
-          #- platform: linux/arm/v8
-          #  arch_name: armv8
+          # Mapping to official Debian architecture tags used by apt/dpkg
+          - platform: linux/arm64
+            arch_name: arm64
+            base_image: "ubuntu:noble"
+          - platform: linux/arm/v6
+            arch_name: armel
+            base_image: "debian:bookworm-slim"
+
           # Matrix compilation strategies
           - variant_type: release
             cxxflags: "-O3"
@@ -67,17 +61,19 @@ jobs:
       - name: Create Build Dockerfile
         run: |
           cat << 'EOF' > Dockerfile.boost
-          # Stage 1: Build inside a Debian environment to generate glibc-compatible binaries
-          FROM ubuntu:noble AS builder
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE} AS builder
 
-          # Install dependencies using apt-get instead of apk
+          ENV DEBIAN_FRONTEND=noninteractive
+
+          # Added checkinstall to generate the .deb package automatically
           RUN apt-get update && apt-get install -y --no-install-recommends \
               wget \
               ca-certificates \
               tar \
               build-essential \
-              linux-headers-generic \
               python3-dev \
+              checkinstall \
               && rm -rf /var/lib/apt/lists/*
 
           ARG BOOST_VERSION
@@ -85,6 +81,8 @@ jobs:
           ARG BOOST_CXXFLAGS
           ARG BOOST_VARIANT
           ARG BOOST_DEBUG_SYMBOLS
+          ARG ARCH_NAME
+          ARG VARIANT_TYPE
 
           WORKDIR /build
           RUN wget -nv https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_DIR}.tar.gz \
@@ -92,36 +90,53 @@ jobs:
               && rm ${BOOST_DIR}.tar.gz
 
           WORKDIR /build/${BOOST_DIR}
-          RUN ./bootstrap.sh --prefix=/opt/boost \
-              && ./b2 install --prefix=/opt/boost \
+
+          # 1. Run standard bootstrap
+          RUN ./bootstrap.sh --prefix=/usr/local
+
+          # 2. Use checkinstall to intercept the build installation and output a .deb file
+          # We specify a custom package name to prevent conflict with stock system packages
+          RUN checkinstall -y \
+              --pkgname="custom-boost-${VARIANT_TYPE}" \
+              --pkgversion="${BOOST_VERSION}" \
+              --pkgarchitecture="${ARCH_NAME}" \
+              --pkggroup="devel" \
+              --provides="custom-boost" \
+              --requires="libc6" \
+              --maintainer="ci-builder@local" \
+              ./b2 install \
                   threading=multi \
                   link=shared,static \
                   variant=${BOOST_VARIANT} \
                   cxxflags=${BOOST_CXXFLAGS} \
                   debug-symbols=${BOOST_DEBUG_SYMBOLS}
 
-          # Stage 2: Discard build tools, export only the debian/ubuntu binaries
+          # Stage 2: Discard everything else, extract ONLY the built .deb package file
           FROM scratch
-          COPY --from=builder /opt/boost /boost
+          COPY --from=builder /build/${BOOST_DIR}/*.deb /packages/
           EOF
 
-      - name: Build Boost via Docker Buildx
+      - name: Build Boost Package via Docker Buildx
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile.boost
           platforms: ${{ matrix.platform }}
           build-args: |
+            BASE_IMAGE=${{ matrix.base_image }}
             BOOST_VERSION=${{ env.BOOST_VERSION }}
             BOOST_DIR=${{ steps.format.outputs.dir_name }}
             BOOST_CXXFLAGS=${{ matrix.cxxflags }}
             BOOST_VARIANT=${{ matrix.boost_variant }}
             BOOST_DEBUG_SYMBOLS=${{ matrix.debug_symbols }}
-          outputs: type=tar,dest=./boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}.tar
+            ARCH_NAME=${{ matrix.arch_name }}
+            VARIANT_TYPE=${{ matrix.variant_type }}
+          # Exports the raw .deb files directory out directly onto the host runner filesystem
+          outputs: type=local,dest=./output-packages
 
-      - name: Upload Boost Artifacts to GitHub
+      - name: Upload Debian Packages to GitHub
         uses: actions/upload-artifact@v7
         with:
-          name: boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}
-          path: ./boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}.tar
-          retention-days: 1
+          name: boost-${{ env.BOOST_VERSION }}-${{ matrix.arch_name }}-${{ matrix.variant_type }}-deb
+          path: ./output-packages/packages/*.deb
+          retention-days: 5
