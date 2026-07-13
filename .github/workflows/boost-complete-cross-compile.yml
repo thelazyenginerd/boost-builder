@@ -12,7 +12,7 @@ env:
 
 jobs:
   build-boost:
-    name: Build Boost v${{ env.BOOST_VERSION }} (${{ matrix.arch }})
+    name: Build Boost Target (${{ matrix.arch }})
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -53,7 +53,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Multiarch and Install Dependencies
         run: |
@@ -130,7 +130,7 @@ jobs:
           tar -czf boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-all-libs.tar.gz ${{ matrix.stagedir }}/lib
 
       - name: Upload Build Artifacts
-        uses: actions/artifacts@v4
+        uses: actions/upload-artifact@v7
         with:
           name: boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-with-dependencies
           path: ${{ env.BOOST_DIR }}/boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-all-libs.tar.gz
