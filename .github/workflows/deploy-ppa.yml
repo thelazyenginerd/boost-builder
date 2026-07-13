@@ -1,0 +1,50 @@
+name: Deploy Debian PPA
+
+on:
+  workflow_run:
+    workflows: ["Build Boost Debian Packages"]
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  publish-ppa:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Prepare Staging Area
+        run: mkdir -p ./incoming-debs
+
+      # Uses v7 to perfectly align with your artifact management version
+      - name: Download All Built Packages
+        uses: actions/download-artifact@v7
+        with:
+          pattern: boost-*-deb
+          path: ./incoming-debs
+          merge-multiple: true
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish To Static APT Repo
+        uses: MauroDruwel/host-your-own-apt-repo-on-github@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_supported_arch: |
+            arm64
+            armel
+          repo_supported_version: |
+            bookworm
+            noble
+          file: "./incoming-debs/*.deb"
+          file_target_version: "bookworm"
+          private_key: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          public_key: ${{ secrets.APT_GPG_PUBLIC_KEY }}
+          repository: "${{ github.repository }}"
