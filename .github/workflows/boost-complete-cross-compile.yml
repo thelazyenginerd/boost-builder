@@ -21,8 +21,8 @@ jobs:
           - arch: amd64
             ubuntu_arch: amd64
             toolchain_pkg: g++
-            toolset_id: gcc-amd64       # What we pass to the command line: toolset=gcc-amd64
-            toolset_version: amd64      # The unique ID token used inside jam configuration
+            toolset_id: gcc-amd64
+            toolset_version: amd64
             toolset_compiler: g++
             b2_arch: x86
             b2_address_model: 64
@@ -33,8 +33,8 @@ jobs:
           - arch: aarch64
             ubuntu_arch: arm64
             toolchain_pkg: g++-aarch64-linux-gnu
-            toolset_id: gcc-arm64       # What we pass to the command line: toolset=gcc-arm64
-            toolset_version: arm64      # The unique ID token used inside jam configuration
+            toolset_id: gcc-arm64
+            toolset_version: arm64
             toolset_compiler: aarch64-linux-gnu-g++
             b2_arch: arm
             b2_address_model: 64
@@ -66,6 +66,8 @@ jobs:
             liblzma-dev:${{ matrix.ubuntu_arch }} \
             libzstd-dev:${{ matrix.ubuntu_arch }} \
             libicu-dev:${{ matrix.ubuntu_arch }}
+            # UNCOMMENT BELOW LINE ONLY IF YOU CHOOSE OPTION 2:
+            # libpython3.12-dev:${{ matrix.ubuntu_arch }}
 
       - name: Setup Dynamic Version Strings
         run: |
@@ -81,7 +83,6 @@ jobs:
 
       - name: Setup user-config.jam
         run: |
-          # FIXED: We use matrix.toolset_version here so Boost maps 'gcc-arm64' or 'gcc-amd64' correctly
           cat << 'EOF' > $HOME/user-config.jam
           using gcc : ${{ matrix.toolset_version }} : ${{ matrix.toolset_compiler }} : ${{ matrix.b2_flags }} ;
           EOF
@@ -96,6 +97,7 @@ jobs:
         run: |
           cd ${{ env.BOOST_DIR }}
 
+          # FIXED: Added --without-python to prevent building complex cross-arch python files
           ./b2 -j$(nproc) \
             toolset=${{ matrix.toolset_id }} \
             architecture=${{ matrix.b2_arch }} \
@@ -103,6 +105,7 @@ jobs:
             target-os=linux \
             stage \
             --stagedir=${{ matrix.stagedir }} \
+            --without-python \
             link=shared,static \
             threading=multi \
             variant=release \
