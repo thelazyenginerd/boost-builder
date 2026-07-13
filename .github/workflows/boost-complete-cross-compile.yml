@@ -13,7 +13,7 @@ env:
 jobs:
   build-boost:
     name: Build Boost Target (${{ matrix.arch }})
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -40,17 +40,6 @@ jobs:
             stagedir: stage_aarch64
             sysroot_lib: /usr/lib/aarch64-linux-gnu
 
-          - arch: armv6
-            ubuntu_arch: armel
-            toolchain_pkg: g++-arm-linux-gnueabi
-            toolset_name: gcc-armv6
-            toolset_compiler: arm-linux-gnueabi-g++
-            b2_arch: arm
-            b2_address_model: 32
-            b2_flags: '<cxxflags>"-march=armv6" <linkflags>"-march=armv6"'
-            stagedir: stage_armv6
-            sysroot_lib: /usr/lib/arm-linux-gnueabi
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -62,14 +51,14 @@ jobs:
             sudo dpkg --add-architecture ${{ matrix.ubuntu_arch }}
             sudo sed -i -e 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list.d/* || true
 
-            # Point to the official Ubuntu 22.04 (jammy) ports tree for architecture packages
-            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe" | sudo tee -a /etc/apt/sources.list
-            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe" | sudo tee -a /etc/apt/sources.list
+            # Point cleanly to modern Ubuntu noble ports tree for native arm64 support
+            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe" | sudo tee -a /etc/apt/sources.list
+            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe" | sudo tee -a /etc/apt/sources.list
           fi
 
           sudo apt-get update || true
 
-          # Install toolchain and targeted dependency libraries
+          # Install toolchain and targeted dependency libraries directly from Ubuntu
           sudo apt-get install -y \
             ${{ matrix.toolchain_pkg }} \
             wget tar gzip \
