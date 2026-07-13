@@ -13,7 +13,7 @@ env:
 jobs:
   build-boost:
     name: Build Boost Target (${{ matrix.arch }})
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -61,8 +61,10 @@ jobs:
           if [ "${{ matrix.arch }}" != "amd64" ]; then
             sudo dpkg --add-architecture ${{ matrix.ubuntu_arch }}
             sudo sed -i -e 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list.d/* || true
-            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe" | sudo tee -a /etc/apt/sources.list
-            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe" | sudo tee -a /etc/apt/sources.list
+
+            # Point to the official Ubuntu 22.04 (jammy) ports tree for architecture packages
+            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe" | sudo tee -a /etc/apt/sources.list
+            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe" | sudo tee -a /etc/apt/sources.list
           fi
 
           sudo apt-get update || true
@@ -81,13 +83,11 @@ jobs:
         run: |
           BOOST_UNDERSCORE=$(echo "${{ env.BOOST_VERSION }}" | tr '.' '_')
           echo "BOOST_UNDERSCORE=${BOOST_UNDERSCORE}" >> $GITHUB_ENV
-          # This maps to the raw directory name extracted from the source archive (e.g., boost_1_91_0)
           echo "BOOST_DIR_NAME=boost_${BOOST_UNDERSCORE}" >> $GITHUB_ENV
           echo "BOOST_DIR=$GITHUB_WORKSPACE/boost_${BOOST_UNDERSCORE}" >> $GITHUB_ENV
 
       - name: Download and Extract Boost Archive
         run: |
-          # Uses the requested URL structure with the appropriate parameterized values
           wget https://archives.boost.io/release/${{ env.BOOST_VERSION }}/source/${{ env.BOOST_DIR_NAME }}.tar.gz
           tar -xf ${{ env.BOOST_DIR_NAME }}.tar.gz
 
