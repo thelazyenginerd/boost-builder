@@ -1,0 +1,137 @@
+name: Complete Cross-Compile Boost with Deps
+
+on:
+  push:
+    branches: [ cross ]
+  pull_request:
+    branches: [ cross ]
+  workflow_dispatch:
+
+env:
+  BOOST_VERSION: "1.91.0"
+
+jobs:
+  build-boost:
+    name: Build Boost v${{ env.BOOST_VERSION }} (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            ubuntu_arch: amd64
+            toolchain_pkg: g++
+            toolset_name: gcc-amd64
+            toolset_compiler: g++
+            b2_arch: x86
+            b2_address_model: 64
+            b2_flags: ""
+            stagedir: stage_amd64
+            sysroot_lib: /usr/lib/x86_64-linux-gnu
+
+          - arch: aarch64
+            ubuntu_arch: arm64
+            toolchain_pkg: g++-aarch64-linux-gnu
+            toolset_name: gcc-arm64
+            toolset_compiler: aarch64-linux-gnu-g++
+            b2_arch: arm
+            b2_address_model: 64
+            b2_flags: ""
+            stagedir: stage_aarch64
+            sysroot_lib: /usr/lib/aarch64-linux-gnu
+
+          - arch: armv6
+            ubuntu_arch: armel
+            toolchain_pkg: g++-arm-linux-gnueabi
+            toolset_name: gcc-armv6
+            toolset_compiler: arm-linux-gnueabi-g++
+            b2_arch: arm
+            b2_address_model: 32
+            b2_flags: '<cxxflags>"-march=armv6" <linkflags>"-march=armv6"'
+            stagedir: stage_armv6
+            sysroot_lib: /usr/lib/arm-linux-gnueabi
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Multiarch and Install Dependencies
+        run: |
+          # Only configure cross-architecture remote repositories if we aren't building natively
+          if [ "${{ matrix.arch }}" != "amd64" ]; then
+            sudo dpkg --add-architecture ${{ matrix.ubuntu_arch }}
+            sudo sed -i -e 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list.d/* || true
+            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe" | sudo tee -a /etc/apt/sources.list
+            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe" | sudo tee -a /etc/apt/sources.list
+          fi
+
+          sudo apt-get update || true
+
+          # Install toolchain and targeted dependency libraries
+          sudo apt-get install -y \
+            ${{ matrix.toolchain_pkg }} \
+            wget tar bzip2 \
+            zlib1g-dev:${{ matrix.ubuntu_arch }} \
+            libbz2-dev:${{ matrix.ubuntu_arch }} \
+            liblzma-dev:${{ matrix.ubuntu_arch }} \
+            libzstd-dev:${{ matrix.ubuntu_arch }} \
+            libicu-dev:${{ matrix.ubuntu_arch }}
+
+      - name: Setup Dynamic Version Strings
+        run: |
+          BOOST_UNDERSCORE=$(echo "${{ env.BOOST_VERSION }}" | tr '.' '_')
+          echo "BOOST_UNDERSCORE=${BOOST_UNDERSCORE}" >> $GITHUB_ENV
+          echo "BOOST_DIR=$GITHUB_WORKSPACE/boost_${BOOST_UNDERSCORE}" >> $GITHUB_ENV
+
+      - name: Download and Extract Boost Archive
+        run: |
+          wget https://github.com/boostorg/boost/releases/download/boost-${{ env.BOOST_VERSION }}/boost_${{ env.BOOST_UNDERSCORE }}.tar.bz2
+          tar -xf boost_${{ env.BOOST_UNDERSCORE }}.tar.bz2
+
+      - name: Setup user-config.jam
+        run: |
+          cat << 'EOF' > $HOME/user-config.jam
+          using gcc : ${{ matrix.toolset_name }} : ${{ matrix.toolset_compiler }} : ${{ matrix.b2_flags }} ;
+          EOF
+          cat $HOME/user-config.jam
+
+      - name: Bootstrap Boost Build Engine (b2)
+        run: |
+          cd ${{ env.BOOST_DIR }}
+          ./bootstrap.sh --with-toolset=gcc
+
+      - name: Compile All Boost Libraries + Dependencies
+        run: |
+          cd ${{ env.BOOST_DIR }}
+
+          ./b2 -j$(nproc) \
+            toolset=${{ matrix.toolset_name }} \
+            architecture=${{ matrix.b2_arch }} \
+            address-model=${{ matrix.b2_address_model }} \
+            target-os=linux \
+            stage \
+            --stagedir=${{ matrix.stagedir }} \
+            link=shared,static \
+            threading=multi \
+            variant=release \
+            -sZLIB_INCLUDE=/usr/include \
+            -sZLIB_LIBPATH=${{ matrix.sysroot_lib }} \
+            -sBZIP2_INCLUDE=/usr/include \
+            -sBZIP2_LIBPATH=${{ matrix.sysroot_lib }} \
+            -sLZMA_INCLUDE=/usr/include \
+            -sLZMA_LIBPATH=${{ matrix.sysroot_lib }} \
+            -sZSTD_INCLUDE=/usr/include \
+            -sZSTD_LIBPATH=${{ matrix.sysroot_lib }} \
+            -sICU_PATH=/usr
+
+      - name: Tar Target Binaries
+        run: |
+          cd ${{ env.BOOST_DIR }}
+          tar -czf boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-all-libs.tar.gz ${{ matrix.stagedir }}/lib
+
+      - name: Upload Build Artifacts
+        uses: actions/artifacts@v4
+        with:
+          name: boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-with-dependencies
+          path: ${{ env.BOOST_DIR }}/boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-all-libs.tar.gz
+          retention-days: 5
