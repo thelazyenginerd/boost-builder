@@ -13,45 +13,15 @@ permissions:
   contents: read
 
 jobs:
-  build-boost:
+  smoke-test-amd64:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # arm64 targets Pi 4 & Rock64. arm/v6 (armel) targets Pi Zero W.
-        platform: [linux/arm64, linux/arm/v6]
-        variant_type: [release, debug]
-        include:
-          # Mapping to official Debian architecture tags used by apt/dpkg
-          - platform: linux/arm64
-            arch_name: arm64
-            base_image: "ubuntu:noble"
-          - platform: linux/arm/v6
-            arch_name: armel
-            base_image: "debian:bookworm-slim"
-
-          # Matrix compilation strategies
-          - variant_type: release
-            cxxflags: "-O3"
-            boost_variant: "release"
-            debug_symbols: "on"
-          - variant_type: debug
-            cxxflags: "-O0"
-            boost_variant: "debug"
-            debug_symbols: "on"
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm,arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # Converts "1.91.0" format to "boost_1_91_0" required for the source tree
       - name: Format Directory Name
         id: format
         run: |
@@ -61,13 +31,11 @@ jobs:
       - name: Create Build Dockerfile
         run: |
           cat << 'EOF' > Dockerfile.boost
-          # Global scope declaration for the FROM instruction
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE} AS builder
 
           ENV DEBIAN_FRONTEND=noninteractive
 
-          # Added checkinstall to generate the .deb package automatically
           RUN apt-get update && apt-get install -y --no-install-recommends \
               wget \
               ca-certificates \
@@ -79,7 +47,6 @@ jobs:
 
           WORKDIR /build
 
-          # Re-declare ARGs within the build stage scope so they are active below
           ARG BASE_IMAGE
           ARG BOOST_VERSION
           ARG BOOST_DIR
@@ -95,10 +62,8 @@ jobs:
 
           WORKDIR /build/${BOOST_DIR}
 
-          # Run standard bootstrap
           RUN ./bootstrap.sh --prefix=/usr/local
 
-          # 1. Safely install to a staging root directory where b2 won't collide with checkinstall tracking
           RUN mkdir -p /tmp/boost_staging \
               && ./b2 install \
                   --prefix=/tmp/boost_staging \
@@ -108,7 +73,6 @@ jobs:
                   cxxflags=${BOOST_CXXFLAGS} \
                   debug-symbols=${BOOST_DEBUG_SYMBOLS}
 
-          # 2. Feed a clean file copy step into checkinstall to generate a flawless .deb tracking map
           RUN checkinstall -y \
               --pkgname="custom-boost-${VARIANT_TYPE}" \
               --pkgversion="${BOOST_VERSION}" \
@@ -119,7 +83,131 @@ jobs:
               --maintainer="ci-builder@local" \
               cp -a /tmp/boost_staging/. /usr/local/
 
-          # Stage 2: Discard everything else, extract ONLY the built .deb package file
+          FROM scratch
+          ARG BOOST_DIR
+          COPY --from=builder /build/${BOOST_DIR}/*.deb /packages/
+          EOF
+
+      - name: Build Boost Package (Native AMD64 Smoke Test)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.boost
+          platforms: linux/amd64
+          build-args: |
+            BASE_IMAGE=ubuntu:noble
+            BOOST_VERSION=${{ env.BOOST_VERSION }}
+            BOOST_DIR=${{ steps.format.outputs.dir_name }}
+            BOOST_CXXFLAGS=-O3
+            BOOST_VARIANT=release
+            BOOST_DEBUG_SYMBOLS=on
+            ARCH_NAME=amd64
+            VARIANT_TYPE=release
+          outputs: type=local,dest=./output-packages
+
+      - name: Upload Smoke Test Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: boost-${{ env.BOOST_VERSION }}-amd64-smoke-release-deb
+          path: ./output-packages/packages/*.deb
+          retention-days: 1
+
+  # --- MULTI-ARCH SLOW MATRIX JOB ---
+  build-boost:
+    needs: smoke-test-amd64 # <--- This forces the QEMU builds to wait for the smoke test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [linux/arm64, linux/arm/v6]
+        variant_type: [release, debug]
+        include:
+          - platform: linux/arm64
+            arch_name: arm64
+            base_image: "ubuntu:noble"
+          - platform: linux/arm/v6
+            arch_name: armel
+            base_image: "debian:bookworm-slim"
+          - variant_type: release
+            cxxflags: "-O3"
+            boost_variant: "release"
+            debug_symbols: "on"
+          - variant_type: debug
+            cxxflags: "-O0"
+            boost_variant: "debug"
+            debug_symbols: "on"
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm,arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Format Directory Name
+        id: format
+        run: |
+          DIR_NAME="boost_$(echo ${{ env.BOOST_VERSION }} | tr '.' '_')"
+          echo "dir_name=$DIR_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create Build Dockerfile
+        run: |
+          cat << 'EOF' > Dockerfile.boost
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE} AS builder
+
+          ENV DEBIAN_FRONTEND=noninteractive
+
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              wget \
+              ca-certificates \
+              tar \
+              build-essential \
+              python3-dev \
+              checkinstall \
+              && rm -rf /var/lib/apt/lists/*
+
+          WORKDIR /build
+
+          ARG BASE_IMAGE
+          ARG BOOST_VERSION
+          ARG BOOST_DIR
+          ARG BOOST_CXXFLAGS
+          ARG BOOST_VARIANT
+          ARG BOOST_DEBUG_SYMBOLS
+          ARG ARCH_NAME
+          ARG VARIANT_TYPE
+
+          RUN wget -nv https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_DIR}.tar.gz \
+              && tar -xzf ${BOOST_DIR}.tar.gz \
+              && rm ${BOOST_DIR}.tar.gz
+
+          WORKDIR /build/${BOOST_DIR}
+
+          RUN ./bootstrap.sh --prefix=/usr/local
+
+          RUN mkdir -p /tmp/boost_staging \
+              && ./b2 install \
+                  --prefix=/tmp/boost_staging \
+                  threading=multi \
+                  link=shared,static \
+                  variant=${BOOST_VARIANT} \
+                  cxxflags=${BOOST_CXXFLAGS} \
+                  debug-symbols=${BOOST_DEBUG_SYMBOLS}
+
+          RUN checkinstall -y \
+              --pkgname="custom-boost-${VARIANT_TYPE}" \
+              --pkgversion="${BOOST_VERSION}" \
+              --pkgarch="${ARCH_NAME}" \
+              --pkggroup="devel" \
+              --provides="custom-boost" \
+              --requires="libc6" \
+              --maintainer="ci-builder@local" \
+              cp -a /tmp/boost_staging/. /usr/local/
+
           FROM scratch
           ARG BOOST_DIR
           COPY --from=builder /build/${BOOST_DIR}/*.deb /packages/
@@ -140,7 +228,6 @@ jobs:
             BOOST_DEBUG_SYMBOLS=${{ matrix.debug_symbols }}
             ARCH_NAME=${{ matrix.arch_name }}
             VARIANT_TYPE=${{ matrix.variant_type }}
-          # Exports the raw .deb files directory out directly onto the host runner filesystem
           outputs: type=local,dest=./output-packages
 
       - name: Upload Debian Packages to GitHub
