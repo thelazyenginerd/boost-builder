@@ -1,0 +1,393 @@
+name: Debian Trixie Cross-Compile Boost
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  BOOST_VERSION: "1.91.0"
+
+jobs:
+  build-boost:
+    name: Build Boost Target (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+
+    container:
+      image: debian:trixie-slim
+      options: --user root
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            debian_arch: amd64
+            toolchain_pkg: g++
+            toolset_id: gcc-amd64
+            toolset_version: amd64
+            toolset_compiler: g++
+            b2_arch: x86
+            b2_address_model: 64
+            b2_flags: ""
+            stagedir: stage_amd64
+            sysroot_lib: /usr/lib/x86_64-linux-gnu
+
+          - arch: aarch64
+            debian_arch: arm64
+            toolchain_pkg: g++-aarch64-linux-gnu
+            toolset_id: gcc-arm64
+            toolset_version: arm64
+            toolset_compiler: aarch64-linux-gnu-g++
+            b2_arch: arm
+            b2_address_model: 64
+            b2_flags: ""
+            stagedir: stage_aarch64
+            sysroot_lib: /usr/lib/aarch64-linux-gnu
+
+          - arch: armv7
+            debian_arch: armhf
+            toolchain_pkg: g++-arm-linux-gnueabihf
+            toolset_id: gcc-armv7
+            toolset_version: armv7
+            toolset_compiler: arm-linux-gnueabihf-g++
+            b2_arch: arm
+            b2_address_model: 32
+            b2_flags: '<cxxflags>"-march=armv7-a+fp" <linkflags>"-march=armv7-a+fp"'
+            stagedir: stage_armv7
+            sysroot_lib: /usr/lib/arm-linux-gnueabihf
+
+          - arch: armv6
+            debian_arch: armel
+            toolchain_pkg: g++-arm-linux-gnueabi
+            toolset_id: gcc-armv6
+            toolset_version: armv6
+            toolset_compiler: arm-linux-gnueabi-g++
+            b2_arch: arm
+            b2_address_model: 32
+            b2_flags: '<cxxflags>"-march=armv6 -mfloat-abi=soft" <linkflags>"-march=armv6 -mfloat-abi=soft"'
+            stagedir: stage_armv6
+            sysroot_lib: /usr/lib/arm-linux-gnueabi
+
+    steps:
+      - name: Install minimal bootstrap tools inside container
+        run: |
+          apt-get update
+          apt-get install -y git wget tar gzip
+
+      - name: Mark repository directory as safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Multiarch and Install Dependencies
+        run: |
+          if [ "${{ matrix.arch }}" != "amd64" ]; then
+            dpkg --add-architecture ${{ matrix.debian_arch }}
+          fi
+
+          apt-get update
+
+          # Added libpython3-dev:${{ matrix.debian_arch }}
+          # This installs the multiarch-safe target target subheaders (like pyconfig.h)
+          # without triggering top-level package manager conflicts.
+          apt-get install -y \
+            g++ \
+            python3-dev \
+            ${{ matrix.toolchain_pkg }} \
+            libpython3-dev:${{ matrix.debian_arch }} \
+            zlib1g-dev:${{ matrix.debian_arch }} \
+            libbz2-dev:${{ matrix.debian_arch }} \
+            liblzma-dev:${{ matrix.debian_arch }} \
+            libzstd-dev:${{ matrix.debian_arch }} \
+            libicu-dev:${{ matrix.debian_arch }}
+
+      - name: Setup Dynamic Version Strings
+        run: |
+          BOOST_UNDERSCORE=$(echo "${{ env.BOOST_VERSION }}" | tr '.' '_')
+          echo "BOOST_UNDERSCORE=${BOOST_UNDERSCORE}" >> $GITHUB_ENV
+          echo "BOOST_DIR_NAME=boost_${BOOST_UNDERSCORE}" >> $GITHUB_ENV
+          echo "BOOST_DIR=$GITHUB_WORKSPACE/boost_${BOOST_UNDERSCORE}" >> $GITHUB_ENV
+
+      - name: Download and Extract Boost Archive
+        run: |
+          wget https://archives.boost.io/release/${{ env.BOOST_VERSION }}/source/${{ env.BOOST_DIR_NAME }}.tar.gz
+          tar -xf ${{ env.BOOST_DIR_NAME }}.tar.gz
+
+      - name: Setup user-config.jam
+        run: |
+          PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+
+          cat << EOF > $HOME/user-config.jam
+          using gcc : ${{ matrix.toolset_version }} : ${{ matrix.toolset_compiler }} : ${{ matrix.b2_flags }} ;
+          using python : $PY_VER : /usr/bin/python3 : /usr/include/python$PY_VER : ${{ matrix.sysroot_lib }} ;
+          EOF
+          cat $HOME/user-config.jam
+
+      - name: Bootstrap Boost Build Engine (b2)
+        run: |
+          cd ${{ env.BOOST_DIR }}
+          ./bootstrap.sh --with-toolset=gcc
+
+      - name: Compile All Boost Libraries + Dependencies
+        run: |
+          cd ${{ env.BOOST_DIR }}
+
+          ./b2 -j$(nproc) \
+            toolset=${{ matrix.toolset_id }} \
+            architecture=${{ matrix.b2_arch }} \
+            address-model=${{ matrix.b2_address_model }} \
+            target-os=linux \
+            stage \
+            --stagedir=${{ matrix.stagedir }} \
+            link=shared,static \
+            threading=multi \
+            variant=release \
+            -sZLIB_INCLUDE=/usr/include \
+            -sZLIB_LIBPATH=${{ matrix.sysroot_lib }} \
+            -sBZIP2_INCLUDE=/usr/include \
+            -sBZIP2_LIBPATH=${{ matrix.sysroot_lib }} \
+            -sLZMA_INCLUDE=/usr/include \
+            -sLZMA_LIBPATH=${{ matrix.sysroot_lib }} \
+            -sZSTD_INCLUDE=/usr/include \
+            -sZSTD_LIBPATH=${{ matrix.sysroot_lib }} \
+            -sICU_PATH=/usr
+
+      - name: Create Debian Package
+        run: |
+          cd ${{ env.BOOST_DIR }}
+
+          # Create debian staging directory structure
+          mkdir -p pkg/DEBIAN
+          mkdir -p pkg/usr/include
+          mkdir -p pkg${{ matrix.sysroot_lib }}
+
+          # Copy headers and libraries
+          cp -r boost pkg/usr/include/
+          cp -RP ${{ matrix.stagedir }}/lib/* pkg${{ matrix.sysroot_lib }}/
+
+          # Generate debian control file (note the empty trailing line required by dpkg)
+          cat <<EOF > pkg/DEBIAN/control
+          Package: libboost-custom-dev
+          Version: ${{ env.BOOST_VERSION }}
+          Architecture: ${{ matrix.debian_arch }}
+          Maintainer: GitHub Actions <actions@github.com>
+          Description: Custom compiled Boost libraries (v${{ env.BOOST_VERSION }})
+          EOF
+
+          # Build the .deb file
+          dpkg-deb --build pkg $GITHUB_WORKSPACE/libboost-custom-dev_${{ env.BOOST_VERSION }}_${{ matrix.debian_arch }}.deb
+
+      - name: Delete old Pages artifact (handles workflow re-runs)
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: github-pages
+          failOnError: false
+
+      - name: Upload Debian Package Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: boost-deb-${{ matrix.debian_arch }}
+          path: libboost-custom-dev_${{ env.BOOST_VERSION }}_${{ matrix.debian_arch }}.deb
+          retention-days: 5
+
+  deploy-ppa:
+    name: Deploy PPA to GitHub Pages
+    needs: build-boost
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' # Only deploy on production merges
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Install APT Repo Utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils gpg
+
+      - name: Download all deb artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: boost-deb-*
+          merge-multiple: true
+          path: debs
+
+      - name: Build APT Repository Structure
+        run: |
+          mkdir -p ppa/dists/trixie/main/binary-amd64
+          mkdir -p ppa/dists/trixie/main/binary-arm64
+          mkdir -p ppa/dists/trixie/main/binary-armhf
+          mkdir -p ppa/dists/trixie/main/binary-armel
+          mkdir -p ppa/pool/main
+
+          # Move all downloaded .debs into the pool directory
+          mv debs/*.deb ppa/pool/main/
+
+          # Generate Packages & Packages.gz index files for each architecture
+          cd ppa
+          for arch in amd64 arm64 armhf armel; do
+            apt-ftparchive --arch $arch packages pool/main > dists/trixie/main/binary-$arch/Packages
+            gzip -k -f dists/trixie/main/binary-$arch/Packages
+          done
+
+          # Create the Repository Release Config
+          cat <<EOF > apt-release.conf
+          APT::FTPArchive::Release::Origin "MyBoostPPA";
+          APT::FTPArchive::Release::Label "My Boost PPA";
+          APT::FTPArchive::Release::Suite "trixie";
+          APT::FTPArchive::Release::Codename "trixie";
+          APT::FTPArchive::Release::Architectures "amd64 arm64 armhf armel";
+          APT::FTPArchive::Release::Components "main";
+          APT::FTPArchive::Release::Description "Custom Boost Libraries";
+          EOF
+
+          # Generate main Release file
+          apt-ftparchive -c apt-release.conf release dists/trixie > dists/trixie/Release
+
+      - name: Import GPG Key and Sign Repository
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          GPG_PUBLIC_KEY: ${{ secrets.APT_GPG_PUBLIC_KEY }}
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ] || [ -z "$GPG_PUBLIC_KEY" ]; then
+            echo "::warning:: GPG keys are missing. The PPA repository will be unsigned!"
+            exit 0
+          fi
+
+          # Import the private key to sign the Release index
+          echo "$GPG_PRIVATE_KEY" | gpg --import --batch --yes
+          KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | awk '{print $2}' | cut -d'/' -f2)
+
+          cd ppa
+          # Create InRelease (inline signature) & Release.gpg (detached signature)
+          gpg --default-key "$KEY_ID" --clearsign --digest-algo SHA256 --batch --yes -o dists/trixie/InRelease dists/trixie/Release
+          gpg --default-key "$KEY_ID" --detach-sign --digest-algo SHA256 --batch --yes -o dists/trixie/Release.gpg dists/trixie/Release
+
+          # Write public key directly to the web root so clients can pull it down
+          echo "$GPG_PUBLIC_KEY" > public.key
+
+      - name: Generate Repository Homepage (index.html)
+        env:
+          GPG_KEY_EXISTS: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          REPO_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          REPO_URL=$(echo "$REPO_URL" | tr '[:upper:]' '[:lower:]')
+
+          SOME_DEB=$(ls ppa/pool/main/*.deb 2>/dev/null | head -n 1)
+          MODULES_LIST_HTML=""
+          COMPILED_LIST_HTML=""
+
+          if [ -n "$SOME_DEB" ] && [ -f "$SOME_DEB" ]; then
+            # 1. Extract Header-Only & Core Modules (from usr/include/boost/)
+            # This grabs the top-level files/folders directly under boost/ (e.g. asio, beast, filesystem)
+            MODULES=$(dpkg-deb -c "$SOME_DEB" | awk '{print $6}' | grep -o 'usr/include/boost/[a-zA-Z0-9_-]\+' | sed 's|usr/include/boost/||' | sort -u)
+            for mod in $MODULES; do
+              MODULES_LIST_HTML="${MODULES_LIST_HTML}<li>${mod}</li>"
+            done
+
+            # 2. Extract Compiled Linkable Libraries (from usr/lib/)
+            COMPILED=$(dpkg-deb -c "$SOME_DEB" | awk '{print $6}' | grep -o 'libboost_[a-zA-Z0-9_-]\+\.\(so\|a\)$' | sed -E 's/^lib//; s/\.(so|a)$//' | sort -u)
+            for lib in $COMPILED; do
+              COMPILED_LIST_HTML="${COMPILED_LIST_HTML}<li>${lib}</li>"
+            done
+          else
+            MODULES_LIST_HTML="<li>No modules found</li>"
+            COMPILED_LIST_HTML="<li>No libraries found</li>"
+          fi
+
+          # --- Generate index.html ---
+          cat <<EOF > ppa/index.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Boost Custom PPA</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #333; }
+              pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; font-family: monospace; }
+              code { font-family: monospace; background: #f4f4f4; padding: 2px 5px; border-radius: 3px; }
+              h1 { border-bottom: 1px solid #ddd; padding-bottom: 10px; }
+              h2 { margin-top: 40px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+              .grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+                gap: 10px;
+                list-style-type: none;
+                padding: 0;
+                margin-top: 15px;
+              }
+              .grid li {
+                background: #f8f9fa;
+                border: 1px solid #e9ecef;
+                padding: 6px 10px;
+                border-radius: 4px;
+                font-family: monospace;
+                font-size: 0.85em;
+                text-align: center;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+              }
+              .compiled li {
+                background: #eef9ff;
+                border-color: #d0e8ff;
+              }
+            </style>
+          </head>
+          <body>
+            <h1>Custom Boost Debian Repository</h1>
+            <p>This repository hosts custom compiled Boost libraries (v${{ env.BOOST_VERSION }}) for Debian Trixie.</p>
+
+            <h2>How to add this repository:</h2>
+          EOF
+
+          if [ -n "$GPG_KEY_EXISTS" ]; then
+            cat <<EOF >> ppa/index.html
+            <p><strong>Step 1:</strong> Add the repository GPG key:</p>
+            <pre>sudo wget -O- ${REPO_URL}/public.key | sudo gpg --dearmor -o /usr/share/keyrings/boost-custom.gpg</pre>
+
+            <p><strong>Step 2:</strong> Add the APT repository source list:</p>
+            <pre>echo "deb [signed-by=/usr/share/keyrings/boost-custom.gpg] ${REPO_URL} trixie main" | sudo tee /etc/apt/sources.list.d/boost-custom.list</pre>
+          EOF
+          else
+            cat <<EOF >> ppa/index.html
+            <p><strong>Step 1:</strong> Add the APT repository source list (unsigned/trusted fallback):</p>
+            <pre>echo "deb [trusted=yes] ${REPO_URL} trixie main" | sudo tee /etc/apt/sources.list.d/boost-custom.list</pre>
+            <p><em>Warning: This repository is unsigned because no GPG key was supplied during setup.</em></p>
+          EOF
+          fi
+
+          cat <<EOF >> ppa/index.html
+            <p><strong>Step 3:</strong> Update packages and install:</p>
+            <pre>sudo apt-get update&#10;sudo apt-get install libboost-custom-dev</pre>
+
+            <h2>Compiled Libraries (Linkable):</h2>
+            <p>These components require linking at compile time (e.g. <code>-lboost_filesystem</code>):</p>
+            <ul class="grid compiled">
+              ${COMPILED_LIST_HTML}
+            </ul>
+
+            <h2>Header-Only & Core Modules:</h2>
+            <p>These namespaces are fully available for inclusion (e.g. <code>#include &lt;boost/asio.hpp&gt;</code>) without requiring explicit linker flags:</p>
+            <ul class="grid">
+              ${MODULES_LIST_HTML}
+            </ul>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload Pages Web Artifact
+        uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: ppa
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5.0.0
