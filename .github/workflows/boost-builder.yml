@@ -61,8 +61,8 @@ jobs:
       - name: Create Build Dockerfile
         run: |
           cat << 'EOF' > Dockerfile.boost
-          # Added a fallback default value ("ubuntu:noble") to clear the InvalidDefaultArgInFrom warning
-          ARG BASE_IMAGE=ubuntu:noble
+          # Global scope declaration for the FROM instruction
+          ARG BASE_IMAGE
           FROM ${BASE_IMAGE} AS builder
 
           ENV DEBIAN_FRONTEND=noninteractive
@@ -79,7 +79,7 @@ jobs:
 
           WORKDIR /build
 
-          # 2. Re-declare ARGs within the build stage scope so they are active below
+          # Re-declare ARGs within the build stage scope so they are active below
           ARG BASE_IMAGE
           ARG BOOST_VERSION
           ARG BOOST_DIR
@@ -98,23 +98,26 @@ jobs:
           # Run standard bootstrap
           RUN ./bootstrap.sh --prefix=/usr/local
 
-          # Dynamically generate a clean local shell wrapper script to isolate b2 execution arguments
-          # This protects arguments from parsing issues across Docker and checkinstall steps
-          RUN echo '#!/bin/sh' > run_install.sh && \
-              echo "set -e" >> run_install.sh && \
-              echo "./b2 install -q --directories threading=multi link=shared,static variant=${BOOST_VARIANT} cxxflags=\"${BOOST_CXXFLAGS}\" debug-symbols=${BOOST_DEBUG_SYMBOLS}" >> run_install.sh && \
-              chmod +x run_install.sh
+          # 1. Safely install to a staging root directory where b2 won't collide with checkinstall tracking
+          RUN mkdir -p /tmp/boost_staging \
+              && ./b2 install \
+                  --prefix=/tmp/boost_staging \
+                  threading=multi \
+                  link=shared,static \
+                  variant=${BOOST_VARIANT} \
+                  cxxflags=${BOOST_CXXFLAGS} \
+                  debug-symbols=${BOOST_DEBUG_SYMBOLS}
 
-          # Use checkinstall to run our clean wrapper script
+          # 2. Feed a clean file copy step into checkinstall to generate a flawless .deb tracking map
           RUN checkinstall -y \
-              --pkgname="custom-boost" \
-              --pkgversion="${BOOST_VERSION}+${VARIANT_TYPE}" \
+              --pkgname="custom-boost-${VARIANT_TYPE}" \
+              --pkgversion="${BOOST_VERSION}" \
               --pkgarch="${ARCH_NAME}" \
               --pkggroup="devel" \
               --provides="custom-boost" \
               --requires="libc6" \
               --maintainer="ci-builder@local" \
-              ./run_install.sh
+              cp -a /tmp/boost_staging/. /usr/local/
 
           # Stage 2: Discard everything else, extract ONLY the built .deb package file
           FROM scratch
