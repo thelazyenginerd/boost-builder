@@ -1,4 +1,4 @@
-name: Build SBC Boost Debian Packages
+name: Build Boost Debian Packages
 
 on:
   push:
@@ -101,7 +101,8 @@ jobs:
           # Dynamically generate a clean local shell wrapper script to isolate b2 execution arguments
           # This protects arguments from parsing issues across Docker and checkinstall steps
           RUN echo '#!/bin/sh' > run_install.sh && \
-              echo "./b2 install threading=multi link=shared,static variant=${BOOST_VARIANT} cxxflags=\"${BOOST_CXXFLAGS}\" debug-symbols=${BOOST_DEBUG_SYMBOLS}" >> run_install.sh && \
+              echo "set -e" >> run_install.sh && \
+              echo "./b2 install -q --directories threading=multi link=shared,static variant=${BOOST_VARIANT} cxxflags=\"${BOOST_CXXFLAGS}\" debug-symbols=${BOOST_DEBUG_SYMBOLS}" >> run_install.sh && \
               chmod +x run_install.sh
 
           # Use checkinstall to run our clean wrapper script
