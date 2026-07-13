@@ -61,6 +61,7 @@ jobs:
       - name: Create Build Dockerfile
         run: |
           cat << 'EOF' > Dockerfile.boost
+          # 1. Global scope declaration for the FROM instruction
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE} AS builder
 
@@ -76,6 +77,10 @@ jobs:
               checkinstall \
               && rm -rf /var/lib/apt/lists/*
 
+          WORKDIR /build
+
+          # 2. Re-declare ARGs within the build stage scope so they are active below
+          ARG BASE_IMAGE
           ARG BOOST_VERSION
           ARG BOOST_DIR
           ARG BOOST_CXXFLAGS
@@ -84,22 +89,20 @@ jobs:
           ARG ARCH_NAME
           ARG VARIANT_TYPE
 
-          WORKDIR /build
           RUN wget -nv https://archives.boost.io/release/${BOOST_VERSION}/source/${BOOST_DIR}.tar.gz \
               && tar -xzf ${BOOST_DIR}.tar.gz \
               && rm ${BOOST_DIR}.tar.gz
 
           WORKDIR /build/${BOOST_DIR}
 
-          # 1. Run standard bootstrap
+          # Run standard bootstrap
           RUN ./bootstrap.sh --prefix=/usr/local
 
-          # 2. Use checkinstall to intercept the build installation and output a .deb file
-          # We specify a custom package name to prevent conflict with stock system packages
+          # Use checkinstall to intercept the build installation and output a .deb file
           RUN checkinstall -y \
               --pkgname="custom-boost-${VARIANT_TYPE}" \
               --pkgversion="${BOOST_VERSION}" \
-              --pkgarchitecture="${ARCH_NAME}" \
+              --pkgarch="${ARCH_NAME}" \
               --pkggroup="devel" \
               --provides="custom-boost" \
               --requires="libc6" \
@@ -113,6 +116,7 @@ jobs:
 
           # Stage 2: Discard everything else, extract ONLY the built .deb package file
           FROM scratch
+          ARG BOOST_DIR
           COPY --from=builder /build/${BOOST_DIR}/*.deb /packages/
           EOF
 
