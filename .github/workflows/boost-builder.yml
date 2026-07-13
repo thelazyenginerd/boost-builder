@@ -5,20 +5,23 @@ on:
     branches: [ "main", "dev" ]
   workflow_dispatch:
 
+# Centralized version management
 env:
   BOOST_VERSION: "1.91.0"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-boost:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # arm64 targets Pi 4 & Rock64. arm/v6 (armel) targets Pi Zero W.
         platform: [linux/arm64, linux/arm/v6]
         variant_type: [release, debug]
         include:
+          # Mapping to official Debian architecture tags used by apt/dpkg
           - platform: linux/arm64
             arch_name: arm64
             base_image: "ubuntu:noble"
@@ -26,6 +29,7 @@ jobs:
             arch_name: armel
             base_image: "debian:bookworm-slim"
 
+          # Matrix compilation strategies
           - variant_type: release
             cxxflags: "-O3"
             boost_variant: "release"
@@ -47,6 +51,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      # Converts "1.91.0" format to "boost_1_91_0" required for the source tree
       - name: Format Directory Name
         id: format
         run: |
@@ -56,10 +61,13 @@ jobs:
       - name: Create Build Dockerfile
         run: |
           cat << 'EOF' > Dockerfile.boost
-          ARG BASE_IMAGE
+          # Added a fallback default value ("ubuntu:noble") to clear the InvalidDefaultArgInFrom warning
+          ARG BASE_IMAGE=ubuntu:noble
           FROM ${BASE_IMAGE} AS builder
+
           ENV DEBIAN_FRONTEND=noninteractive
 
+          # Added checkinstall to generate the .deb package automatically
           RUN apt-get update && apt-get install -y --no-install-recommends \
               wget \
               ca-certificates \
@@ -71,6 +79,7 @@ jobs:
 
           WORKDIR /build
 
+          # 2. Re-declare ARGs within the build stage scope so they are active below
           ARG BASE_IMAGE
           ARG BOOST_VERSION
           ARG BOOST_DIR
@@ -86,24 +95,23 @@ jobs:
 
           WORKDIR /build/${BOOST_DIR}
 
+          # Run standard bootstrap
           RUN ./bootstrap.sh --prefix=/usr/local
 
-          # Unified name to ensure proper upgrades, utilizing version suffixes instead
+          # Use checkinstall to intercept the build installation and output a .deb file
+          # Fixed version formatting to use '+' instead of '-' to satisfy dpkg validation
+          # Wrapped b2 flags in quotes to prevent token split failures inside checkinstall execution environment
           RUN checkinstall -y \
               --pkgname="custom-boost" \
-              --pkgversion="${BOOST_VERSION}-${VARIANT_TYPE}" \
+              --pkgversion="${BOOST_VERSION}+${VARIANT_TYPE}" \
               --pkgarch="${ARCH_NAME}" \
               --pkggroup="devel" \
               --provides="custom-boost" \
               --requires="libc6" \
               --maintainer="ci-builder@local" \
-              ./b2 install \
-                  threading=multi \
-                  link=shared,static \
-                  variant=${BOOST_VARIANT} \
-                  cxxflags=${BOOST_CXXFLAGS} \
-                  debug-symbols=${BOOST_DEBUG_SYMBOLS}
+              "./b2 install threading=multi link=shared,static variant=${BOOST_VARIANT} cxxflags=\"${BOOST_CXXFLAGS}\" debug-symbols=${BOOST_DEBUG_SYMBOLS}"
 
+          # Stage 2: Discard everything else, extract ONLY the built .deb package file
           FROM scratch
           ARG BOOST_DIR
           COPY --from=builder /build/${BOOST_DIR}/*.deb /packages/
@@ -124,6 +132,7 @@ jobs:
             BOOST_DEBUG_SYMBOLS=${{ matrix.debug_symbols }}
             ARCH_NAME=${{ matrix.arch_name }}
             VARIANT_TYPE=${{ matrix.variant_type }}
+          # Exports the raw .deb files directory out directly onto the host runner filesystem
           outputs: type=local,dest=./output-packages
 
       - name: Upload Debian Packages to GitHub
