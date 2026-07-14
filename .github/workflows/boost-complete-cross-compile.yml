@@ -59,7 +59,6 @@ jobs:
             stagedir: stage_armv7
             sysroot_lib: /usr/lib/arm-linux-gnueabihf
 
-          # ADDED: ARMv6 (via armel soft-float multiarch toolchains)
           - arch: armv6
             debian_arch: armel
             toolchain_pkg: g++-arm-linux-gnueabi
@@ -79,7 +78,7 @@ jobs:
           apt-get install -y git wget tar gzip
 
       - name: Mark repository directory as safe
-        run: git config --global --add safe.directory /__w/boost-builder/boost-builder
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -92,7 +91,9 @@ jobs:
 
           apt-get update
 
+          # Explicitly installing native 'g++' guarantees the build engine (b2) can bootstrap itself on amd64
           apt-get install -y \
+            g++ \
             ${{ matrix.toolchain_pkg }} \
             zlib1g-dev:${{ matrix.debian_arch }} \
             libbz2-dev:${{ matrix.debian_arch }} \
