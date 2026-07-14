@@ -91,12 +91,14 @@ jobs:
 
           apt-get update
 
-          # Native python3-dev supplies host environment + architecture-agnostic headers.
-          # Multiarch system dependencies ensure cross-binaries are linked appropriately.
+          # Added libpython3-dev:${{ matrix.debian_arch }}
+          # This installs the multiarch-safe target target subheaders (like pyconfig.h)
+          # without triggering top-level package manager conflicts.
           apt-get install -y \
             g++ \
             python3-dev \
             ${{ matrix.toolchain_pkg }} \
+            libpython3-dev:${{ matrix.debian_arch }} \
             zlib1g-dev:${{ matrix.debian_arch }} \
             libbz2-dev:${{ matrix.debian_arch }} \
             liblzma-dev:${{ matrix.debian_arch }} \
