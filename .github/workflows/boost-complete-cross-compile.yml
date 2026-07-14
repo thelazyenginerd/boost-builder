@@ -1,4 +1,4 @@
-name: Complete Cross-Compile Boost with Deps
+name: Debian Trixie Cross-Compile Boost
 
 on:
   push:
@@ -14,12 +14,17 @@ jobs:
   build-boost:
     name: Build Boost Target (${{ matrix.arch }})
     runs-on: ubuntu-latest
+
+    container:
+      image: debian:trixie-slim
+      options: --user root
+
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
-            ubuntu_arch: amd64
+            debian_arch: amd64
             toolchain_pkg: g++
             toolset_id: gcc-amd64
             toolset_version: amd64
@@ -31,7 +36,7 @@ jobs:
             sysroot_lib: /usr/lib/x86_64-linux-gnu
 
           - arch: aarch64
-            ubuntu_arch: arm64
+            debian_arch: arm64
             toolchain_pkg: g++-aarch64-linux-gnu
             toolset_id: gcc-arm64
             toolset_version: arm64
@@ -42,32 +47,58 @@ jobs:
             stagedir: stage_aarch64
             sysroot_lib: /usr/lib/aarch64-linux-gnu
 
+          - arch: armv7
+            debian_arch: armhf
+            toolchain_pkg: g++-arm-linux-gnueabihf
+            toolset_id: gcc-armv7
+            toolset_version: armv7
+            toolset_compiler: arm-linux-gnueabihf-g++
+            b2_arch: arm
+            b2_address_model: 32
+            b2_flags: '<cxxflags>"-march=armv7-a+fp" <linkflags>"-march=armv7-a+fp"'
+            stagedir: stage_armv7
+            sysroot_lib: /usr/lib/arm-linux-gnueabihf
+
+          # ADDED: ARMv6 (via armel soft-float multiarch toolchains)
+          - arch: armv6
+            debian_arch: armel
+            toolchain_pkg: g++-arm-linux-gnueabi
+            toolset_id: gcc-armv6
+            toolset_version: armv6
+            toolset_compiler: arm-linux-gnueabi-g++
+            b2_arch: arm
+            b2_address_model: 32
+            b2_flags: '<cxxflags>"-march=armv6 -mfloat-abi=soft" <linkflags>"-march=armv6 -mfloat-abi=soft"'
+            stagedir: stage_armv6
+            sysroot_lib: /usr/lib/arm-linux-gnueabi
+
     steps:
+      - name: Install minimal bootstrap tools inside container
+        run: |
+          apt-get update
+          apt-get install -y git wget tar gzip
+
+      - name: Mark repository directory as safe
+        run: git config --global --add safe.directory /__w/boost-builder/boost-builder
+
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Setup Multiarch and Install Dependencies
         run: |
           if [ "${{ matrix.arch }}" != "amd64" ]; then
-            sudo dpkg --add-architecture ${{ matrix.ubuntu_arch }}
-            sudo sed -i -e 's/deb http/deb [arch=amd64] http/g' /etc/apt/sources.list.d/* || true
-
-            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe" | sudo tee -a /etc/apt/sources.list
-            echo "deb [arch=${{ matrix.ubuntu_arch }}] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe" | sudo tee -a /etc/apt/sources.list
+            dpkg --add-architecture ${{ matrix.debian_arch }}
           fi
 
-          sudo apt-get update || true
+          apt-get update
 
-          sudo apt-get install -y \
+          apt-get install -y \
             ${{ matrix.toolchain_pkg }} \
-            wget tar gzip \
-            zlib1g-dev:${{ matrix.ubuntu_arch }} \
-            libbz2-dev:${{ matrix.ubuntu_arch }} \
-            liblzma-dev:${{ matrix.ubuntu_arch }} \
-            libzstd-dev:${{ matrix.ubuntu_arch }} \
-            libicu-dev:${{ matrix.ubuntu_arch }}
-            # UNCOMMENT BELOW LINE ONLY IF YOU CHOOSE OPTION 2:
-            # libpython3.12-dev:${{ matrix.ubuntu_arch }}
+            zlib1g-dev:${{ matrix.debian_arch }} \
+            libbz2-dev:${{ matrix.debian_arch }} \
+            liblzma-dev:${{ matrix.debian_arch }} \
+            libzstd-dev:${{ matrix.debian_arch }} \
+            libicu-dev:${{ matrix.debian_arch }}
 
       - name: Setup Dynamic Version Strings
         run: |
@@ -97,7 +128,6 @@ jobs:
         run: |
           cd ${{ env.BOOST_DIR }}
 
-          # FIXED: Added --without-python to prevent building complex cross-arch python files
           ./b2 -j$(nproc) \
             toolset=${{ matrix.toolset_id }} \
             architecture=${{ matrix.b2_arch }} \
@@ -125,8 +155,8 @@ jobs:
           tar -czf boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-all-libs.tar.gz ${{ matrix.stagedir }}/lib
 
       - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
-          name: boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-with-dependencies
+          name: boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-debian-trixie
           path: ${{ env.BOOST_DIR }}/boost-${{ env.BOOST_VERSION }}-${{ matrix.arch }}-all-libs.tar.gz
           retention-days: 5
