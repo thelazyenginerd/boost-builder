@@ -91,10 +91,12 @@ jobs:
 
           apt-get update
 
-          # Explicitly installing native 'g++' guarantees the build engine (b2) can bootstrap itself on amd64
+          # Added native 'python3-dev' and targeted cross 'python3-dev:${{ matrix.debian_arch }}'
           apt-get install -y \
             g++ \
+            python3-dev \
             ${{ matrix.toolchain_pkg }} \
+            python3-dev:${{ matrix.debian_arch }} \
             zlib1g-dev:${{ matrix.debian_arch }} \
             libbz2-dev:${{ matrix.debian_arch }} \
             liblzma-dev:${{ matrix.debian_arch }} \
@@ -115,8 +117,12 @@ jobs:
 
       - name: Setup user-config.jam
         run: |
-          cat << 'EOF' > $HOME/user-config.jam
+          # Dynamically capture the container's default Python version (e.g., 3.13)
+          PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+
+          cat << EOF > $HOME/user-config.jam
           using gcc : ${{ matrix.toolset_version }} : ${{ matrix.toolset_compiler }} : ${{ matrix.b2_flags }} ;
+          using python : $PY_VER : /usr/bin/python3 : /usr/include/python$PY_VER : ${{ matrix.sysroot_lib }} ;
           EOF
           cat $HOME/user-config.jam
 
@@ -129,6 +135,7 @@ jobs:
         run: |
           cd ${{ env.BOOST_DIR }}
 
+          # Removed '--without-python' to allow Boost.Python and Boost.NumPy components to compile
           ./b2 -j$(nproc) \
             toolset=${{ matrix.toolset_id }} \
             architecture=${{ matrix.b2_arch }} \
@@ -136,7 +143,6 @@ jobs:
             target-os=linux \
             stage \
             --stagedir=${{ matrix.stagedir }} \
-            --without-python \
             link=shared,static \
             threading=multi \
             variant=release \
