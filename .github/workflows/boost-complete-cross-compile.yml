@@ -91,12 +91,12 @@ jobs:
 
           apt-get update
 
-          # Added native 'python3-dev' and targeted cross 'python3-dev:${{ matrix.debian_arch }}'
+          # Native python3-dev supplies host environment + architecture-agnostic headers.
+          # Multiarch system dependencies ensure cross-binaries are linked appropriately.
           apt-get install -y \
             g++ \
             python3-dev \
             ${{ matrix.toolchain_pkg }} \
-            python3-dev:${{ matrix.debian_arch }} \
             zlib1g-dev:${{ matrix.debian_arch }} \
             libbz2-dev:${{ matrix.debian_arch }} \
             liblzma-dev:${{ matrix.debian_arch }} \
@@ -117,7 +117,6 @@ jobs:
 
       - name: Setup user-config.jam
         run: |
-          # Dynamically capture the container's default Python version (e.g., 3.13)
           PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 
           cat << EOF > $HOME/user-config.jam
@@ -135,7 +134,6 @@ jobs:
         run: |
           cd ${{ env.BOOST_DIR }}
 
-          # Removed '--without-python' to allow Boost.Python and Boost.NumPy components to compile
           ./b2 -j$(nproc) \
             toolset=${{ matrix.toolset_id }} \
             architecture=${{ matrix.b2_arch }} \
